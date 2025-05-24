@@ -7,7 +7,7 @@ jupyter:
       format_version: '1.2'
       jupytext_version: 1.17.1
   kernelspec:
-    display_name: Python 3 (ipykernel)
+    display_name: Python 3
     language: python
     name: python3
 ---
@@ -35,6 +35,8 @@ plt.rcParams['figure.figsize']=(8,8)
 ```
 
 Please insert you  firstname  and name below
+
+Mikołaj Golowski, Jakub Pleśniak
 
 ```{python}
 from  sklearn.model_selection import train_test_split
@@ -108,22 +110,73 @@ labels_test = torch.from_numpy(data_test.values[:,4:5]).to(dtype=torch.float32)
 ```
 
 ```{python editable=TRUE, slideshow={'slide_type': ''}}
-model = tnn.Sequential(tnn.Linear(in_features=nf, out_features=1), tnn.Sigmoid())
+model = tnn.Sequential(
+    tnn.Linear(in_features=nf, out_features=16),  
+    tnn.Sigmoid(),
+    tnn.Linear(in_features=16, out_features=32),  
+    tnn.ReLU(),
+    tnn.Linear(in_features=32, out_features=64),  
+    tnn.ReLU(),
+    tnn.Linear(in_features=64, out_features=1), 
+    tnn.Sigmoid()
+)
 ```
 
 ```{python editable=TRUE, slideshow={'slide_type': ''}}
 from sklearn.metrics import roc_curve, confusion_matrix, accuracy_score
-```
-
-```{python editable=TRUE, slideshow={'slide_type': ''}}
-y_true = labels_test.numpy()
+loss_fn = tnn.BCELoss()
+optimizer = torch.optim.SGD(model.parameters(), lr=0.01, momentum=0.9)
 with torch.no_grad():
-  y_proba = model(features_test);
-  y_predicted = 1*(y_proba>0.5)
+    pred =  model(features_train)
+    acc = torch.mean(0.0+ ((pred > 0.5)== (labels_train>0.5)))
+acc    
+```
+
+```{python}
+num_epochs = 300
+
+for epoch in range(num_epochs):
+    optimizer.zero_grad() 
+    pred = model(features_train) 
+    loss = loss_fn(pred, labels_train) 
+    loss.backward() 
+    optimizer.step() 
+
+    with torch.no_grad():
+        model.eval()
+        pred_valid = model(features_test)
+        loss_valid = loss_fn(pred_valid, labels_test)
+        train_acc = torch.mean(0.0 + ((pred > 0.5) == (labels_train > 0.5)))
+        test_acc = torch.mean(0.0 + ((pred_valid > 0.5) == (labels_test > 0.5)))
+
+    if epoch % 10 == 0:
+        print(f'Epoch {epoch}/{num_epochs}, Loss: {loss.item()}, Valid Loss: {loss_valid.item()}, Train Acc: {train_acc.item()}, Test Acc: {test_acc.item()}')
+
+print(f'Final Loss: {loss.item()}, Final Valid Loss: {loss_valid.item()}')
+print(f'Final Train Accuracy: {train_acc.item()}, Final Test Accuracy: {test_acc.item()}')
+
 ```
 
 ```{python editable=TRUE, slideshow={'slide_type': ''}}
-accuracy_score(y_true, y_pred=y_predicted)
+from sklearn.metrics import confusion_matrix
+with torch.no_grad():
+    pred_valid = model(features_test)
+    pred_valid_labels = (pred_valid > 0.5).float()  
+
+labels_test_np = labels_test.numpy()
+pred_valid_labels_np = pred_valid_labels.numpy()
+
+conf_matrix = confusion_matrix(labels_test_np, pred_valid_labels_np)
+disp = ConfusionMatrixDisplay(confusion_matrix=conf_matrix)
+disp.plot()
+plt.show()
+
+class_report = classification_report(labels_test_np, pred_valid_labels_np)
+print(class_report)
+```
+
+```{python editable=TRUE, slideshow={'slide_type': ''}}
+accuracy_score(labels_test_np, y_pred=pred_valid_labels_np)
 ```
 
 ```{python editable=TRUE, slideshow={'slide_type': ''}}

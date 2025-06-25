@@ -7,7 +7,7 @@ jupyter:
       format_version: '1.2'
       jupytext_version: 1.17.1
   kernelspec:
-    display_name: Python 3 (ipykernel)
+    display_name: Python 3
     language: python
     name: python3
 ---
@@ -17,6 +17,10 @@ jupyter:
 <!-- #endregion -->
 
 The task in this assignment is to detect the  counterfeit banknotes. The data set is based on [banknote authentication Data Set ](https://archive.ics.uci.edu/ml/datasets/banknote+authentication#) from UCI Machine Learning repository.  You have already used this set but this time I have removed  the first column. The set  `banknote_authentication.csv` can be found in the `data`  directory.
+
+
+Mikołaj Golowski
+Jakub Pleśniak
 
 ```{python}
 import pandas as pd
@@ -33,6 +37,13 @@ data = pd.read_csv('data/banknote_authentication.csv' )
 data.head()
 ```
 
+```{python}
+from sklearn.model_selection import train_test_split
+
+
+data_train, data_test = train_test_split(data, test_size=0.2, shuffle=True, stratify=data.loc[:,'counterfeit'], random_state=324432)
+```
+
 ## Problem 
 
 
@@ -41,12 +52,121 @@ data.head()
 
 Perform the Quadratic Discriminant Analysis on this set. Calculate the confusion matrix, AUC score and plot the ROC curve. 
 
+```{python}
+# qda
+from sklearn.discriminant_analysis import QuadraticDiscriminantAnalysis
+from sklearn.metrics import ConfusionMatrixDisplay, confusion_matrix
+
+qda = QuadraticDiscriminantAnalysis(store_covariance=True)
+qda.fit(data_train[["a1", "a2", "a3"]].to_numpy(), data_train[["counterfeit"]].to_numpy().ravel())
+
+def predictqdat(X, t):
+    pred_res = qda.predict(X)
+    score = qda.predict_log_proba(X)
+    for idx in range(0, len(score)):
+        if score[idx][pred_res[idx]] > t:
+            pred_res[idx] = 1
+    return pred_res
+
+pred_res = qda.predict(data_test[["a1", "a2", "a3"]].to_numpy())
+```
+
+```{python}
+# confusion matrix
+conf_m_qda = confusion_matrix(data_test[["counterfeit"]].to_numpy(), pred_res)
+disp = ConfusionMatrixDisplay(confusion_matrix=conf_m_qda,
+                              display_labels=qda.classes_)
+disp.plot()
+disp.ax_.set_title("Confusion matrix for Quadratic Discriminant Analysis")
+plt.show()
+```
+
+```{python}
+# roc and auc score
+from sklearn import metrics
+metrics.RocCurveDisplay.from_predictions(
+   data_test[["counterfeit"]].to_numpy(), qda.predict_log_proba(data_test[["a1", "a2", "a3"]].to_numpy())[:, 1])
+
+```
 
 ### B.
 
 
 Perform Gaussian Mixture Discriminant Analysis on this set as described in the `gaussian_mixture_model_EM_algorithm` notebook. Use two components for positives and two components for negatives. Calculate the confusion matrix, AUC score and plot the ROC curve. 
 
+```{python}
+pi0 = len(data_train.loc[data_train["counterfeit"] == 0])/len(data_train)
+pi1 = 1-pi0
+```
+
+```{python}
+def make_pdf(cmp):
+    """
+    Takes a GaussianMixture object and returns corresponding
+    probability distribution function
+    """
+    n_cmp = cmp.n_components
+    dists = [st.multivariate_normal(cmp.means_[i], cmp.covariances_[i]) for i in range(n_cmp)]
+    def pdf(x):
+        p = 0.0
+        for i in range(n_cmp):
+            p+= cmp.weights_[i]*dists[i].pdf(x)
+        return p
+    
+    return pdf
+    
+    
+def make_predict_proba(cmp0, cmp1, pi0=0.5, pi1=.5):
+    """
+    Takes two GaussianMixture object and corresponding priors and returns 
+    pdf for conditional probability P(c=1|x)
+    """
+    pdf0 = make_pdf(cmp0)
+    pdf1 = make_pdf(cmp1)
+    def p(x):
+        p0=pi0*pdf0(x)
+        p1=pi1*pdf1(x)
+        return p1/(p1+p0)    
+        
+    return p
+    
+```
+
+```{python}
+from sklearn.mixture import GaussianMixture
+
+gm0 = GaussianMixture(n_components=2, max_iter=100, tol=0.0001) 
+gm1 = GaussianMixture(n_components=2, max_iter=100, tol=0.0001) 
+
+hc0 = data_train.loc[data_train["counterfeit"] == 0][["a1", "a2", "a3"]].to_numpy()
+hc0y = data_train.loc[data_train["counterfeit"] == 0][["counterfeit"]].to_numpy()
+hc1 = data_train.loc[data_train["counterfeit"] == 1][["a1", "a2", "a3"]].to_numpy()
+hc1y = data_train.loc[data_train["counterfeit"] == 1][["counterfeit"]].to_numpy()
+
+gm0.fit(hc0,hc0y)
+gm1.fit(hc1,hc1y)
+
+pp = make_predict_proba(gm0, gm1, pi0, pi1)
+
+pred_test_p = np.array([pp(x) for x in data_test[["a1", "a2", "a3"]].to_numpy()])
+t = 0.5
+gmda_pred = (pred_test_p >= t).astype(int)
+```
+
+```{python}
+# confusion matrix
+conf_m_gmda = confusion_matrix(data_test[["counterfeit"]].to_numpy(), gmda_pred)
+disp = ConfusionMatrixDisplay(confusion_matrix=conf_m_gmda,
+                              display_labels=qda.classes_)
+disp.plot()
+disp.ax_.set_title("Confusion matrix for GMDA")
+plt.show()
+```
+
+```{python}
+metrics.RocCurveDisplay.from_predictions(
+   data_test[["counterfeit"]].to_numpy(), pred_test_p)
+```
 
 ### C.
 
@@ -56,6 +176,80 @@ Use k-fold cross validation to find the optimal number of gaussian components fo
 
 __Hint__ use the `StratifiedKFold` function from scikit-learn library to generate folds. 
 
+```{python}
+from sklearn.mixture import GaussianMixture
+from sklearn.model_selection import StratifiedKFold
+from sklearn.metrics import roc_auc_score, confusion_matrix, ConfusionMatrixDisplay, RocCurveDisplay
+import numpy as np
+import matplotlib.pyplot as plt
+
+X_train = data_train[["a1", "a2", "a3"]].to_numpy()
+y_train = data_train["counterfeit"].to_numpy()
+X_test = data_test[["a1", "a2", "a3"]].to_numpy()
+y_test = data_test["counterfeit"].to_numpy()
+
+max_components = 12
+kfolds = 5
+
+results = []
+skf = StratifiedKFold(n_splits=kfolds, shuffle=True, random_state=55)
+
+for n0 in range(1, max_components + 1):
+    for n1 in range(1, max_components + 1):
+        aucs = []
+        for train_idx, valid_idx in skf.split(X_train, y_train):
+            X_tr, X_val = X_train[train_idx], X_train[valid_idx]
+            y_tr, y_val = y_train[train_idx], y_train[valid_idx]
+
+            gm0 = GaussianMixture(n_components=n0, max_iter=100, tol=0.0001, random_state=55)
+            gm1 = GaussianMixture(n_components=n1, max_iter=100, tol=0.0001, random_state=55)
+            gm0.fit(X_tr[y_tr == 0])
+            gm1.fit(X_tr[y_tr == 1])
+
+            pi0 = np.mean(y_tr == 0)
+            pi1 = 1 - pi0
+
+            def proba(x):
+                x = x.reshape(1, -1)
+                p0 = pi0 * np.exp(gm0.score_samples(x))[0]
+                p1 = pi1 * np.exp(gm1.score_samples(x))[0]
+                return p1 / (p1 + p0)
+            probs = np.array([proba(x) for x in X_val])
+            auc = roc_auc_score(y_val, probs)
+            aucs.append(auc)
+        results.append({'n0': n0, 'n1': n1, 'mean_auc': np.mean(aucs)})
+
+best = max(results, key=lambda d: d['mean_auc'])
+best_n0, best_n1 = best['n0'], best['n1']
+print(f"Best number of components: class 0 = {best_n0}, class 1 = {best_n1} (CV mean AUC={best['mean_auc']})")
+
+gm0 = GaussianMixture(n_components=best_n0, max_iter=100, tol=0.0001, random_state=55)
+gm1 = GaussianMixture(n_components=best_n1, max_iter=100, tol=0.0001, random_state=55)
+gm0.fit(X_train[y_train == 0])
+gm1.fit(X_train[y_train == 1])
+pi0 = np.mean(y_train == 0)
+pi1 = 1 - pi0
+
+def proba(x):
+    x = x.reshape(1, -1)
+    p0 = pi0 * np.exp(gm0.score_samples(x))[0]
+    p1 = pi1 * np.exp(gm1.score_samples(x))[0]
+    return p1 / (p1 + p0)
+
+test_probs = np.array([proba(x) for x in X_test])
+test_pred = (test_probs >= 0.5).astype(int)
+
+cm = confusion_matrix(y_test, test_pred)
+disp = ConfusionMatrixDisplay(confusion_matrix=cm)
+disp.plot()
+disp.ax_.set_title(f"Confusion matrix for GMDA (n0={best_n0}, n1={best_n1})")
+plt.show()
+
+RocCurveDisplay.from_predictions(y_test, test_probs)
+plt.title(f"ROC Curve (AUC = {roc_auc_score(y_test, test_probs):.4f})")
+plt.show()
+
+```
 
 ## D.  
 
@@ -63,5 +257,65 @@ __Hint__ use the `StratifiedKFold` function from scikit-learn library to generat
 Assume that 1% of all the customers in your store try to pay with a counterfeit 100PLN bill. If you accept the counterfeit bill you loose 100PLN. If you reject a valid bill,  you may loose the purchase, you estimate this loss as 15PLN on average. For each of the three classifiers find the threshold that minimises your losses and calculates the minimum loss for each classifier. Show the optimal classifiers points on the ROC curves.
 
 ```{python editable=TRUE, slideshow={'slide_type': ''}}
+import numpy as np
+
+classifiers = {
+    'QDA': qda.predict_proba(X_test)[:,1],
+    'GMDA': test_probs
+}
+
+P1 = 0.01   # fraction counterfeit
+P0 = 0.99   # fraction genuine
+cost_fn = 100  # accepting counterfeit
+cost_fp = 15   # rejecting genuine
+
+thresholds = np.linspace(0, 1, 500)
+losses = {}
+
+plt.figure(figsize=(10,6))
+
+for name, probs in classifiers.items():
+    min_loss = np.inf
+    best_t = 0.5
+    best_idx = -1
+
+    tpr_list = []
+    fpr_list = []
+    loss_list = []
+
+    for i, t in enumerate(thresholds):
+        preds = (probs >= t).astype(int)
+        tp = np.sum((y_test == 1) & (preds == 1))
+        fp = np.sum((y_test == 0) & (preds == 1))
+        fn = np.sum((y_test == 1) & (preds == 0))
+        tn = np.sum((y_test == 0) & (preds == 0))
+
+        tpr = tp / (tp + fn) if (tp + fn) > 0 else 0
+        fpr = fp / (fp + tn) if (fp + tn) > 0 else 0
+        loss = (fn * cost_fn * P1 / np.sum(y_test == 1)) + (fp * cost_fp * P0 / np.sum(y_test == 0))
+        
+        tpr_list.append(tpr)
+        fpr_list.append(fpr)
+        loss_list.append(loss)
+
+        if loss < min_loss:
+            min_loss = loss
+            best_t = t
+            best_idx = i
+
+    losses[name] = {'min_loss': min_loss, 'best_threshold': best_t, 'best_fpr': fpr_list[best_idx], 'best_tpr': tpr_list[best_idx]}
+
+    # ROC curve
+    plt.plot(fpr_list, tpr_list, label=f'{name} ROC')
+    plt.scatter([fpr_list[best_idx]], [tpr_list[best_idx]], marker='o', s=100, label=f'{name} min loss')
+
+plt.xlabel('false positive rate')
+plt.ylabel('true positive rate')
+plt.title('ROC curve with min loss points')
+plt.legend()
+plt.show()
+
+for name, res in losses.items():
+    print(f"{name}: min expected loss = {res['min_loss']} PLN, threshold = {res['best_threshold']}")
 
 ```
